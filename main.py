@@ -96,9 +96,24 @@ def check_and_download_file():
         now = datetime.now(UTC)
         
         # 使用常量定义更新间隔
-        UPDATE_INTERVAL_DAYS = 2
+        UPDATE_INTERVAL_DAYS = 1
         if (now - file_last_modified).days > UPDATE_INTERVAL_DAYS:
             print("文件已过期，重新下载...")
+            try:
+                # 尝试删除旧文件
+                os.remove(file_path)
+                print("已删除旧文件")
+            except Exception as e:
+                print(f"删除旧文件时出错：{e}")
+                # 尝试修改权限后再删除
+                try:
+                    os.chmod(file_path, 0o666)  # 赋予完全读写权限
+                    os.remove(file_path)
+                    print("修改权限后成功删除旧文件")
+                except Exception as e2:
+                    print(f"修改权限后删除文件仍失败：{e2}")
+            
+            # 无论删除是否成功，都尝试下载新文件
             download_txt_file()
         else:
             print("文件已经是最新的，不需要重新下载。")
@@ -117,6 +132,14 @@ def get_local_mac_address():
 def extract_and_check_authorization():
     """从 txt 文件中提取内容并检查授权状态"""
     try:
+        if not os.path.exists(file_path):
+            print("授权文件不存在，尝试重新下载...")
+            download_txt_file()
+            if not os.path.exists(file_path):
+                print("下载授权文件失败")
+                show_warning("授权失败：无法获取授权文件。")
+                return False
+                
         with open(file_path, "r", encoding="utf-8") as file:
             content = file.read()
 
@@ -144,6 +167,30 @@ def extract_and_check_authorization():
         show_warning("授权失败")
         return False
 
+    except UnicodeDecodeError:
+        # 尝试不同的编码方式
+        try:
+            with open(file_path, "r", encoding="gbk") as file:
+                content = file.read()
+            # 继续处理...与上面相同的逻辑
+            matches = re.findall(r'>2t2([^<]*)</text>', content)
+            if not matches:
+                show_warning("授权失败：未找到有效的授权内容。")
+                return False
+                
+            mac_address = get_local_mac_address()
+            for match in matches:
+                match = match.strip()
+                if any(key in match for key in ['yesyes', mac_address]):
+                    print("授权验证成功")
+                    return True
+            
+            show_warning("授权失败")
+            return False
+        except Exception as e:
+            print(f"尝试其他编码读取授权文件出错：{e}")
+            show_warning(f"授权验证时出错：文件编码问题")
+            return False
     except Exception as e:
         print(f"授权验证出错：{e}")
         show_warning(f"授权验证时出错：{str(e)}")
@@ -153,9 +200,14 @@ def extract_and_check_authorization():
 check_and_download_file()  # 确保文件是最新的
 
 try:
-    extract_and_check_authorization()
+    # 验证授权，如果失败则退出程序
+    if not extract_and_check_authorization():
+        print("授权验证失败，程序退出")
+        exit()
+    print("授权验证通过，继续运行程序")
 except Exception as e:
     show_warning(f"程序运行异常：{e}")
+    exit()
 
 # 创建主窗口
 window = tk.Tk()
